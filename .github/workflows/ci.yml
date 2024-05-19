@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Download virtualenv zipapp
-        run: wget https://bootstrap.pypa.io/virtualenv.pyz
+        run: curl https://bootstrap.pypa.io/virtualenv.pyz -o virtualenv.pyz
       - name: Create virtualenv and install dependencies
         run: |
           python3 virtualenv.pyz --system-site-packages .venv
