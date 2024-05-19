@@ -16,16 +16,15 @@
 #  You should have received a copy of the GNU General Public License
 #  along with pytest-qgis.  If not, see <https://www.gnu.org/licenses/>.
 
-import contextlib
+
 import os.path
 import shutil
 import sys
-import tempfile
 import time
 import warnings
 from collections import namedtuple
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 from unittest import mock
 
 import pytest
@@ -87,13 +86,6 @@ SHOW_MAP_MARKER_DESCRIPTION = (
     f"can be provided as QgsRectangle."
 )
 
-_APP: Optional[QgsApplication] = None
-_CANVAS: Optional[QgsMapCanvas] = None
-_IFACE: Optional[QgisInterface] = None
-_PARENT: Optional[QtWidgets.QWidget] = None
-_AUTOUSE_QGIS: Optional[bool] = None
-_QGIS_CONFIG_PATH: Optional[Path] = None
-
 try:
     _QGIS_VERSION = Qgis.versionInt()
 except AttributeError:
@@ -120,7 +112,7 @@ def pytest_addoption(parser: "Parser") -> None:
     parser.addini(
         CANVAS_WIDTH_KEY,
         CANVAS_DESCRIPTION,
-        type="string",
+        type="int",
         default=CANVAS_SIZE_DEFAULT[0],
     )
     parser.addini(
@@ -142,8 +134,6 @@ def pytest_configure(config: "Config") -> None:
     if not settings.gui_enabled:
         os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
-    _start_and_configure_qgis_app(config)
-
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_teardown(item: pytest.Item, nextitem: Optional[pytest.Item]) -> None:  # noqa: ARG001
@@ -152,30 +142,56 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: Optional[pytest.Item]) 
         ensure_qgis_layer_fixtures_are_cleaned(request)
 
 
-@pytest.fixture(autouse=True, scope="session")
-def qgis_app(request: "SubRequest") -> QgsApplication:
-    yield _APP if not request.config._plugin_settings.qgis_init_disabled else None
-
-    if not request.config._plugin_settings.qgis_init_disabled:
-        assert _APP
-        if not sip.isdeleted(_CANVAS) and _CANVAS is not None:
-            _CANVAS.deleteLater()
-        _APP.exitQgis()
-        if _QGIS_CONFIG_PATH and _QGIS_CONFIG_PATH.exists():
-            # TODO: https://github.com/GispoCoding/pytest-qgis/issues/43
-            with contextlib.suppress(PermissionError):
-                shutil.rmtree(_QGIS_CONFIG_PATH)
+@pytest.fixture(scope="session")
+def qapp_cls() -> type[QgsApplication]:
+    return QgsApplication
 
 
 @pytest.fixture(scope="session")
-def qgis_parent(qgis_app: QgsApplication) -> QWidget:  # noqa: ARG001
-    return _PARENT
+def qapp_args(
+    pytestconfig: "Config",
+    tmp_path_factory: pytest.TempPathFactory,
+) -> list[Any]:
+    temp_config_path = tmp_path_factory.mktemp("pytest-qgis")
+    # os.environ["QGIS_CUSTOM_CONFIG_PATH"] = str(temp_config_path)
+    return [[], pytestconfig.getini("gui_enabled"), str(temp_config_path)]
 
 
 @pytest.fixture(scope="session")
-def qgis_canvas() -> QgsMapCanvas:
-    assert _CANVAS
-    return _CANVAS
+def qgis_app(
+    qapp: QgsApplication,
+) -> Optional[QgsApplication]:
+    qapp.initQgis()
+    QgsGui.editorWidgetRegistry().initEditors()
+
+    yield qapp
+
+    qapp.exitQgis()
+
+
+@pytest.fixture(scope="session")
+def qgis_parent(qgis_app: QgsApplication) -> Optional[QWidget]:
+    parent = QMainWindow()
+
+    return parent
+
+
+@pytest.fixture(scope="session")
+def qgis_canvas(
+    qgis_app: QgsApplication,
+    qgis_parent: QMainWindow,
+    pytestconfig: "Config",
+    qtbot: "",
+) -> QgsMapCanvas:
+    settings: Settings = pytestconfig._plugin_settings
+
+    canvas = QgsMapCanvas(qgis_parent)
+    qtbot.addWidget(canvas)
+
+    qgis_parent.resize(QtCore.QSize(settings.canvas_width, settings.canvas_height))
+    canvas.resize(QtCore.QSize(settings.canvas_width, settings.canvas_height))
+
+    return canvas
 
 
 @pytest.fixture(scope="session")
@@ -185,9 +201,27 @@ def qgis_version() -> int:
 
 
 @pytest.fixture(scope="session")
-def qgis_iface() -> QgisInterfaceOrig:
-    assert _IFACE
-    return _IFACE
+def qgis_iface(qgis_app, qgis_canvas, qgis_parent) -> QgisInterfaceOrig:
+    # QgisInterface is a stub implementation of the QGIS plugin interface
+
+    iface_ = QgisInterface(qgis_canvas, MockMessageBar(), qgis_parent)
+
+    # Patching imported iface (evaluated as None in tests) with iface.
+    # This only works with QGIS >= 3.18 since before that
+    # importing qgis.utils causes RecursionErrors. See this issue for details
+    # https://github.com/qgis/QGIS/issues/40564
+
+    iface_patcher = None
+    if _QGIS_VERSION >= QGIS_3_18:
+        from qgis.utils import iface  # noqa: F401 # This import is required
+
+        iface_patcher = mock.patch("qgis.utils.iface", iface_)
+        iface_patcher.start()
+
+    yield iface_
+
+    if iface_patcher:
+        iface_patcher.stop()
 
 
 @pytest.fixture(scope="session")
@@ -271,37 +305,6 @@ def qgis_show_map(
             _parse_show_map_marker(show_map_marker),
             tmp_path,
         )
-
-
-def _start_and_configure_qgis_app(config: "Config") -> None:
-    global _APP, _CANVAS, _IFACE, _PARENT, _QGIS_CONFIG_PATH  # noqa: PLW0603
-    settings: Settings = config._plugin_settings
-
-    # Use temporary path for QGIS config
-    _QGIS_CONFIG_PATH = Path(tempfile.mkdtemp(prefix="pytest-qgis"))
-    os.environ["QGIS_CUSTOM_CONFIG_PATH"] = str(_QGIS_CONFIG_PATH)
-
-    if not settings.qgis_init_disabled:
-        _APP = QgsApplication([], GUIenabled=settings.gui_enabled)
-        _APP.initQgis()
-        QgsGui.editorWidgetRegistry().initEditors()
-    _PARENT = QMainWindow()
-    _CANVAS = QgsMapCanvas(_PARENT)
-    _PARENT.resize(QtCore.QSize(settings.canvas_width, settings.canvas_height))
-    _CANVAS.resize(QtCore.QSize(settings.canvas_width, settings.canvas_height))
-
-    # QgisInterface is a stub implementation of the QGIS plugin interface
-    _IFACE = QgisInterface(_CANVAS, MockMessageBar(), _PARENT)
-
-    # Patching imported iface (evaluated as None in tests) with iface.
-    # This only works with QGIS >= 3.18 since before that
-    # importing qgis.utils causes RecursionErrors. See this issue for details
-    # https://github.com/qgis/QGIS/issues/40564
-
-    if _QGIS_VERSION >= QGIS_3_18:
-        from qgis.utils import iface  # noqa: F401 # This import is required
-
-        mock.patch("qgis.utils.iface", _IFACE).start()
 
 
 def _initialize_processing(qgis_app: QgsApplication) -> None:

@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from _pytest.pytester import Testdir
+    from _pytest.pytester import Pytester, Testdir
 
 
 def test_ini_canvas(testdir: "Testdir"):
@@ -45,27 +45,27 @@ def test_ini_canvas(testdir: "Testdir"):
 
 
 @pytest.mark.parametrize("gui_enabled", [True, False])
-def test_ini_gui(gui_enabled: bool, testdir: "Testdir"):
-    testdir.makeini(
+def test_ini_gui(gui_enabled: bool, pytester: "Pytester"):
+    pytester.makeini(
         f"""
         [pytest]
         qgis_qui_enabled={gui_enabled}
     """
     )
 
-    testdir.makepyfile(
-        f"""
-        import os
+    test_file_content = f"""import os
 
         def test_offscreen(qgis_new_project):
-            assert (os.environ.get("QT_QPA_PLATFORM", "") ==
-            "{'offscreen' if not gui_enabled else ''}")
+            assert os.environ.get("QT_QPA_PLATFORM", "")
+            == "{'offscreen' if not gui_enabled else ''}"
     """
-    )
-    result = testdir.runpytest("--qgis_disable_init")
+
+    pytester.makepyfile(test_file_content)
+
+    result = pytester.runpytest("--qgis_disable_init")
     result.assert_outcomes(passed=1)
 
-    result = testdir.runpytest("--qgis_disable_init", "--qgis_disable_gui")
+    result = pytester.runpytest("--qgis_disable_init", "--qgis_disable_gui")
     result.assert_outcomes(
         passed=1 if not gui_enabled else 0, failed=1 if gui_enabled else 0
     )

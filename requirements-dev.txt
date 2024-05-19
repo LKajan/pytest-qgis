@@ -94,8 +94,8 @@ pytest==6.2.5
     #   pytest-qt
 pytest-cov==4.1.0
     # via -r .\requirements-dev.in
-pytest-qt==3.3.0
-    # via -r .\requirements-dev.in
+pytest-qt==4.2.0
+    # via -r .\requirements.txt
 pyyaml==6.0.1
     # via pre-commit
 ruff==0.1.6
