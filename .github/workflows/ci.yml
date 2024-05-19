@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install venv
-        run: sudo apt install -y python3-venv
+        run: apt install -y python3-venv
       - name: Create virtualenv and install dependencies
         run: |
           python3 -m venv --system-site-packages .venv
