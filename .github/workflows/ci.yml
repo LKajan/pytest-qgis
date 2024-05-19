@@ -17,11 +17,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - name: Download virtualenv zipapp
-        run: curl https://bootstrap.pypa.io/virtualenv.pyz -o virtualenv.pyz
+      - name: Install venv
+        run: sudo apt install -y python3-venv
       - name: Create virtualenv and install dependencies
         run: |
-          python3 virtualenv.pyz --system-site-packages .venv
+          python3 -m venv --system-site-packages .venv
           .venv/bin/pip install -U pip setuptools
           .venv/bin/pip install -qr requirements.txt pytest-cov
           .venv/bin/pip install -e .
