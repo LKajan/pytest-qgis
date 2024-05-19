@@ -17,19 +17,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - name: Install virtualenv
-        if: ${{ matrix.qgis-tags == 'latest' }}
-        # See PEP668
-        run: pip3 install -U --break-system-packages pip virtualenv
-      - name: Install virtualenv
-        if: ${{ matrix.qgis-tags != 'latest' }}
-        run: pip3 install -U pip virtualenv
-      - name: Install dependencies
+      - name: Download virtualenv zipapp
+        run: wget https://bootstrap.pypa.io/virtualenv.pyz
+      - name: Create virtualenv and install dependencies
         run: |
-          virtualenv --system-site-packages .venv
-          .venv/bin/pip3 install -U pip setuptools
-          .venv/bin/pip3 install -qr requirements.txt pytest-cov
-          .venv/bin/pip3 install -e .
+          python3 virtualenv.pyz --system-site-packages .venv
+          .venv/bin/pip install -U pip setuptools
+          .venv/bin/pip install -qr requirements.txt pytest-cov
+          .venv/bin/pip install -e .
       - name: Run tests
         env:
           QGIS_IN_CI: 1
